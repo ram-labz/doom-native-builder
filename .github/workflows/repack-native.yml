@@ -1,0 +1,41 @@
+name: Slim successful CoMaps artifact (no compilation)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: doom-comaps-repack
+  cancel-in-progress: false
+
+jobs:
+  repack:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: Confirm source artifact still exists
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api repos/ram-labz/doom-native-builder/actions/artifacts/13274835129 \
+            --jq '{name,expired,size_in_bytes,expires_at}'
+          df -h /
+      - name: Repack existing native archive without rebuilding
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OUTPUT: ${{ runner.temp }}/doom-ios-native-slim.tar.gz
+        run: python3 scripts/repack_existing_artifact.py
+      - name: Upload compact verified archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: doom-ios-native-slim
+          retention-days: 90
+          if-no-files-found: error
+          compression-level: 0
+          path: |
+            ${{ runner.temp }}/doom-ios-native-slim.tar.gz
+            ${{ runner.temp }}/doom-ios-native-slim.tar.gz.sha256
