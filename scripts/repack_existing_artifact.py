@@ -12,7 +12,26 @@ import sys
 import tarfile
 import tempfile
 import urllib.request
+from urllib.parse import urlparse
 import zipfile
+
+class GitHubArtifactRedirect(urllib.request.HTTPRedirectHandler):
+    """GitHub API redirects to a signed artifact URL on another host.
+
+    Do not forward the GitHub bearer token to artifact storage; the
+    pre-signed download URL authenticates itself.
+    """
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        redirected = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if redirected and urlparse(newurl).hostname != urlparse(req.full_url).hostname:
+            for key in list(redirected.headers):
+                if key.lower() == "authorization":
+                    del redirected.headers[key]
+            for key in list(redirected.unredirected_hdrs):
+                if key.lower() == "authorization":
+                    del redirected.unredirected_hdrs[key]
+        return redirected
+
 
 RUN_ID = "41710765023"
 ARTIFACT_ID = "13274835129"
@@ -59,7 +78,8 @@ def main():
             "User-Agent": "doom-native-repack",
         })
         print("Downloading existing successful build artifact; NO compilation.", flush=True)
-        with urllib.request.urlopen(req, timeout=120) as response, zip_path.open("wb") as f:
+        opener = urllib.request.build_opener(GitHubArtifactRedirect())
+        with opener.open(req, timeout=120) as response, zip_path.open("wb") as f:
             shutil.copyfileobj(response, f, 4 * 1024 * 1024)
         print(f"Downloaded ZIP: {zip_path.stat().st_size:,} bytes", flush=True)
         with zipfile.ZipFile(zip_path) as z:
