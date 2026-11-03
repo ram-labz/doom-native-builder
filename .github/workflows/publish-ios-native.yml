@@ -1,0 +1,71 @@
+name: Publish reusable slim CoMaps iOS release (no compilation)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/publish-ios-native.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: doom-comaps-ios-release
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Preflight publishing script without downloading native files
+        run: |
+          python3 -m unittest discover -s tests -p 'test_publish_slim_release.py' -v
+          python3 -m py_compile scripts/publish_slim_release.py
+
+      - name: Locate latest successful slim repack
+        id: repack
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          RUN_ID=$(gh run list --repo "${GITHUB_REPOSITORY}" \
+            --workflow repack-native.yml --limit 30 \
+            --json databaseId,status,conclusion \
+            --jq '[.[] | select(.status == "completed" and .conclusion == "success")][0].databaseId // empty')
+          if [[ ! "$RUN_ID" =~ ^[0-9]+$ ]]; then
+            echo '::error::No successful repack run. No new native build will start.'
+            exit 1
+          fi
+          echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
+          echo "Reusing successful repack run: $RUN_ID"
+
+      - name: Download already compiled slim artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ steps.repack.outputs.run_id }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/slim"
+          gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name doom-ios-native-slim --dir "$RUNNER_TEMP/slim"
+          test -s "$RUNNER_TEMP/slim/doom-ios-native-slim.tar.gz"
+          test -s "$RUNNER_TEMP/slim/doom-ios-native-slim.tar.gz.sha256"
+          cd "$RUNNER_TEMP/slim"
+          sha256sum --check doom-ios-native-slim.tar.gz.sha256
+          df -h .
+
+      - name: Publish verified split assets as reusable public release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ steps.repack.outputs.run_id }}
+        run: |
+          python3 scripts/publish_slim_release.py \
+            --bundle "$RUNNER_TEMP/slim/doom-ios-native-slim.tar.gz" \
+            --sha-file "$RUNNER_TEMP/slim/doom-ios-native-slim.tar.gz.sha256" \
+            --repo "$GITHUB_REPOSITORY" \
+            --run-id "$RUN_ID"
