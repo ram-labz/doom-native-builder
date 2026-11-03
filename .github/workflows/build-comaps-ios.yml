@@ -1,0 +1,76 @@
+name: Build DOOM CoMaps iOS binaries
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: doom-comaps-native-builder
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Compile patched CoMaps and DuckDB
+    runs-on: macos-26
+    timeout-minutes: 300
+    steps:
+      - name: Check private repository access
+        env:
+          ACCESS_TOKEN: ${{ secrets.DOOM_REPO_READ_TOKEN }}
+        run: |
+          if [ -z "$ACCESS_TOKEN" ]; then
+            echo '::error::Missing DOOM_REPO_READ_TOKEN repository secret.'
+            exit 1
+          fi
+
+      - name: Check out DOOM native build scripts
+        uses: actions/checkout@v4
+        with:
+          repository: ram-labz/doom
+          ref: feature/embedded-offline-navigation
+          token: ${{ secrets.DOOM_REPO_READ_TOKEN }}
+          persist-credentials: false
+          path: doom
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - name: Verify build environment
+        run: |
+          xcodebuild -version
+          cmake --version
+          git lfs version
+          flutter --version
+
+      - name: Prepare Flutter project
+        working-directory: doom
+        run: |
+          flutter create --platforms=ios --project-name doom --org com.ramlabz .
+          flutter pub get
+
+      - name: Build native CoMaps and DuckDB once
+        working-directory: doom
+        env:
+          DOOM_IOS_DEVICE_ONLY: '1'
+        run: bash tool/prepare_embedded_navigation.sh ios
+
+      - name: Package verified binaries and matching map assets
+        working-directory: doom
+        run: |
+          bash tool/package_ios_native_bundle.sh "$RUNNER_TEMP/doom-ios-native.tar.gz"
+          shasum -a 256 "$RUNNER_TEMP/doom-ios-native.tar.gz" | tee "$RUNNER_TEMP/doom-ios-native.sha256"
+
+      - name: Upload reusable native bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: doom-ios-native-bundle
+          path: |
+            ${{ runner.temp }}/doom-ios-native.tar.gz
+            ${{ runner.temp }}/doom-ios-native.sha256
+          retention-days: 7
+          if-no-files-found: error
+          compression-level: 0
