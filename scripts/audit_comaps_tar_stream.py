@@ -21,7 +21,7 @@ def audit(bundle: Path, restore_path: Path) -> dict:
     required = set(restore.REQUIRED)
     seen = set()
     arches = {}
-    native_binary = set()
+    native_candidates = {}
     total = 0
     count = 0
     source = ".native_build/agus_maps_flutter"
@@ -50,18 +50,45 @@ def audit(bundle: Path, restore_path: Path) -> dict:
                         for l in libs
                     ):
                         raise ValueError(f"No iOS arm64 device slice in {name}")
-                    arches[name] = True
-            for framework in ("CoMaps", "DuckDB"):
-                marker = f"/{framework}.xcframework/ios-arm64/{framework}.framework/{framework}"
-                if name.startswith(source + "/ios/Frameworks/") and name.endswith(marker):
-                    if entry.size < 8192:
-                        raise ValueError(f"Native device binary is too small: {name}")
-                    native_binary.add(framework)
+                    device = next(
+                        l for l in libs
+                        if l.get("SupportedPlatform") == "ios"
+                        and not l.get("SupportedPlatformVariant")
+                        and "arm64" in l.get("SupportedArchitectures", [])
+                    )
+                    arches[name] = (device["LibraryIdentifier"], device["LibraryPath"])
+            # XCFrameworks can contain .a static archives, not just .framework
+            # bundles. Follow their actual Info.plist LibraryPath and inspect
+            # their Mach-O/archive magic instead of assuming a hard-coded name.
+            if name.startswith(source + "/ios/Frameworks/") and ".xcframework/" in name:
+                if entry.size >= 4096 and (
+                    name.endswith(".a")
+                    or name.endswith(".dylib")
+                    or ".framework/" in name
+                ):
+                    handle = archive.extractfile(entry)
+                    magic = handle.read(8) if handle is not None else b""
+                    if any(magic.startswith(h) for h in (
+                        bytes.fromhex("feedface"), bytes.fromhex("cefaedfe"),
+                        bytes.fromhex("feedfacf"), bytes.fromhex("cffaedfe"),
+                        bytes.fromhex("cafebabe"), bytes.fromhex("bebafeca"),
+                        bytes.fromhex("cafebabf"), bytes.fromhex("bfbafeca"),
+                    )) or magic == b"!<arch>\\n":
+                        native_candidates[name] = entry.size
     missing = sorted(required - seen)
     if missing:
         raise ValueError(f"Native archive missing required files: {missing}")
-    if set(native_binary) != {"CoMaps", "DuckDB"}:
-        raise ValueError(f"Native device binaries not detected: {native_binary}")
+    for framework in ("CoMaps", "DuckDB"):
+        info_path = f"{source}/ios/Frameworks/{framework}.xcframework/Info.plist"
+        meta = arches.get(info_path)
+        if meta is None:
+            raise ValueError(f"iOS device metadata not found for {framework}")
+        identifier, library_path = meta
+        base = f"{source}/ios/Frameworks/{framework}.xcframework/{identifier}/{library_path}"
+        expected = base + "/" + Path(library_path).stem if library_path.endswith(".framework") else base
+        if expected not in native_candidates:
+            matching = [name for name in native_candidates if f"/{framework}.xcframework/" in name]
+            raise ValueError(f"No valid device Mach-O/archive for {framework}; expected {expected}; found {matching[:8]}")
     if len(arches) != 2:
         raise ValueError(f"Insufficient XCFramework iOS device slices: {arches}")
     print(f"PASS: streamed {count} TAR members and {total:,} unpacked bytes.")
