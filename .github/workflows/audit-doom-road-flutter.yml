@@ -55,6 +55,10 @@ jobs:
             test/offline_road_routing_test.dart \
             test/download_center_flow_test.dart
 
+      - name: Run the entire Flutter regression suite before Codemagic
+        working-directory: doom
+        run: flutter test --reporter expanded
+
       - name: Zero-cost release catalog validation
         working-directory: doom
         run: |
