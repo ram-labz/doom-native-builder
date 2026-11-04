@@ -29,6 +29,11 @@ jobs:
           persist-credentials: false
           path: doom
 
+      - name: Record exact DOOM commit being tested
+        run: |
+          git -C doom rev-parse HEAD
+          git -C doom show -s --format='%h %s' HEAD
+
       - name: Install Flutter SDK with a reusable cache
         uses: subosito/flutter-action@v2
         with:
