@@ -50,10 +50,6 @@ jobs:
         working-directory: doom
         run: python3 -m unittest discover -s test -p 'test_*.py' -v
 
-      - name: Check source and downloaded content catalog
-        working-directory: doom
-        run: python3 tool/zero_build_release_gate.py
-
       - name: Verify CoMaps prebuilt-only and signed workflow ordering
         working-directory: doom
         run: |
@@ -92,3 +88,7 @@ jobs:
           )
           print("PASS: signed IPA uses pinned precompiled native binaries and ordered gates.")
           PY
+
+      - name: Check source and downloaded content catalog
+        working-directory: doom
+        run: python3 tool/zero_build_release_gate.py
