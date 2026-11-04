@@ -38,6 +38,20 @@ jobs:
           persist-credentials: false
           path: doom
 
+      - name: Install Node 22 for free Watch backend preflight
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: doom/functions/package.json
+
+      - name: Verify multi-hazard Watch parser without billing or external APIs
+        working-directory: doom/functions
+        run: |
+          npm install --omit=dev --no-audit --no-fund
+          npm run check
+          npm run test:watch
+
       - name: Fail-fast Python syntax check
         working-directory: doom
         run: python3 -m compileall -q tool test
