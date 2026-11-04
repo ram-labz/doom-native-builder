@@ -83,6 +83,19 @@ jobs:
           assert "bash tool/build_embedded_navigation.sh" not in s
           assert "DOOM_IOS_NATIVE_BUNDLE_MANIFEST_URL:" in s
           assert "DOOM_IOS_NATIVE_BUNDLE_SHA256:" in s
+          # Apple's build number, not Codemagic's per-workflow counter, must
+          # drive both the signed IPA and its ShareExtension.
+          reserve = "python3 tool/resolve_ios_build_number.py"
+          flutter_build = 'flutter build ipa --release --build-number="$DOOM_IOS_BUILD_NUMBER"'
+          final_gate = "python3 tool/verify_ios_bundle_versions.py"
+          assert reserve in s and flutter_build in s and final_gate in s
+          assert s.index(reserve) < s.index("flutter create --platforms=ios")
+          assert s.index(reserve) < s.index("dart run tool/configure_platforms.dart")
+          assert s.index(flutter_build) < s.index(final_gate)
+          assert '--build-number="$BUILD_NUMBER"' not in s
+          assert "ENV['DOOM_IOS_BUILD_NUMBER']" in (
+              Path("tool/install_share_extension.rb").read_text()
+          )
           # Codemagic CLI defaults to recursively scanning **/*.xcodeproj,
           # including broken example projects under build/ios/SourcePackages.
           # Scope BOTH commands to the generated DOOM Runner project.
