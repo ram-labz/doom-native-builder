@@ -1,0 +1,94 @@
+name: DOOM free signed-build source audit (no compilation)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/audit-doom-signed-source.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: doom-source-audit-free
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    name: Check DOOM source without Flutter or CoMaps compilation
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Verify existing private DOOM checkout permission
+        env:
+          DOOM_READ_TOKEN: ${{ secrets.DOOM_REPO_READ_TOKEN }}
+        run: |
+          test -n "$DOOM_READ_TOKEN" || {
+            echo '::error::Existing DOOM_REPO_READ_TOKEN is missing.'
+            exit 1
+          }
+
+      - name: Checkout signed iOS branch source
+        uses: actions/checkout@v4
+        with:
+          repository: ram-labz/doom
+          ref: feature/embedded-offline-navigation
+          token: ${{ secrets.DOOM_REPO_READ_TOKEN }}
+          persist-credentials: false
+          path: doom
+
+      - name: Fail-fast Python syntax check
+        working-directory: doom
+        run: python3 -m compileall -q tool test
+
+      - name: Verify shell syntax before any native build
+        working-directory: doom
+        run: bash -n tool/prepare_embedded_navigation.sh tool/package_ios_native_bundle.sh tool/build_embedded_navigation.sh
+
+      - name: Run complete signed-build Python regression suite
+        working-directory: doom
+        run: python3 -m unittest discover -s test -p 'test_*.py' -v
+
+      - name: Check source and downloaded content catalog
+        working-directory: doom
+        run: python3 tool/zero_build_release_gate.py
+
+      - name: Verify CoMaps prebuilt-only and signed workflow ordering
+        working-directory: doom
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          s = Path("codemagic.yaml").read_text().split("  ios_signed_ipa:", 1)[1]
+          gates = [
+              "python3 tool/restore_ios_native_bundle.py --check",
+              "python3 -m unittest discover",
+              "python3 tool/check_export_compliance.py",
+              "flutter create --platforms=ios",
+              "flutter pub get",
+              "dart run tool/configure_platforms.dart",
+              "python3 tool/configure_firebase.py --platform ios",
+              "flutter analyze --no-fatal-infos --no-fatal-warnings",
+              "flutter test --reporter expanded",
+              "\n        script: python3 tool/restore_ios_native_bundle.py\n",
+              "python3 tool/verify_ios_native_frameworks.py",
+              "dart run tool/release_preflight.dart",
+              "xcode-project detect-bundle-id",
+              "xcode-project use-profiles",
+              "flutter build ipa --release",
+              "python3 tool/verify_ios_ipa_native_gps.py",
+          ]
+          missing = [g for g in gates if g not in s]
+          assert not missing, f"Missing signed IPA stage(s): {missing}"
+          assert [s.index(x) for x in gates] == sorted(s.index(x) for x in gates), (
+              "Signed workflow stages out of expected order"
+          )
+          assert "prepare_embedded_navigation.sh" not in s
+          assert "bash tool/build_embedded_navigation.sh" not in s
+          assert "DOOM_IOS_NATIVE_BUNDLE_MANIFEST_URL:" in s
+          assert "DOOM_IOS_NATIVE_BUNDLE_SHA256:" in s
+          assert "from download_ios_native_release import read_verified_manifest" in (
+              Path("tool/restore_ios_native_bundle.py").read_text()
+          )
+          print("PASS: signed IPA uses pinned precompiled native binaries and ordered gates.")
+          PY
