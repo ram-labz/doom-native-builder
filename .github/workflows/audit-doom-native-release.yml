@@ -1,0 +1,72 @@
+name: Audit published DOOM iOS native bundle without Codemagic
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - scripts/audit_comaps_tar_stream.py
+      - .github/workflows/audit-doom-native-release.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: doom-native-release-smoke
+  cancel-in-progress: false
+
+jobs:
+  validate-published-native:
+    name: Stream and verify precompiled iOS framework archive
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Checkout source branch containing exact Codemagic release pins
+        uses: actions/checkout@v4
+        with:
+          repository: ram-labz/doom
+          ref: feature/embedded-offline-navigation
+          token: ${{ secrets.DOOM_REPO_READ_TOKEN }}
+          persist-credentials: false
+          path: doom
+
+      - name: Free early disk and Python syntax checks
+        run: |
+          set -euo pipefail
+          python3 -m py_compile scripts/audit_comaps_tar_stream.py \
+            doom/tool/download_ios_native_release.py \
+            doom/tool/restore_ios_native_bundle.py
+          df -h /
+          test "$(df -Pk / | awk 'NR==2 {print $4}')" -gt 3800000 || {
+            echo "::error::Insufficient space to download the native archive safely."
+            exit 1
+          }
+
+      - name: Download exactly the published Codemagic archive with full SHA-256 validation
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          import sys
+          sys.path.insert(0, str(Path("doom/tool").resolve()))
+          from download_ios_native_release import verified_download_parts
+          config = Path("doom/codemagic.yaml").read_text()
+          def get(name):
+              m = re.search(r'^\s*' + name + r': "([^"]+)"\s*$', config, re.M)
+              if not m:
+                  raise ValueError("Missing published iOS archive setting " + name)
+              return m.group(1)
+          url = get("DOOM_IOS_NATIVE_BUNDLE_MANIFEST_URL")
+          digest = get("DOOM_IOS_NATIVE_BUNDLE_SHA256")
+          target = Path("/tmp/doom-audited-native.tar.gz")
+          verified_download_parts(url, digest, target)
+          print(f"PASS: downloaded {target.stat().st_size:,} bytes with pinned SHA-256 {digest}.")
+          PY
+
+      - name: Stream archive and verify all required native targets without extracting
+        run: |
+          python3 scripts/audit_comaps_tar_stream.py \
+            --bundle /tmp/doom-audited-native.tar.gz \
+            --restore doom/tool/restore_ios_native_bundle.py
