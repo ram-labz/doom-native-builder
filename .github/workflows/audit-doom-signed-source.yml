@@ -89,6 +89,30 @@ jobs:
           print("PASS: signed IPA uses pinned precompiled native binaries and ordered gates.")
           PY
 
+      - name: Verify published Hawaii .tar size and SHA-256 match the app catalog
+        working-directory: doom
+        run: |
+          python3 - <<'PY'
+          import json
+          import urllib.request
+          from pathlib import Path
+          catalog = json.loads(Path("assets/catalog_seed.json").read_text())
+          regions = {x["id"]: x for x in catalog["regions"]}
+          hawaii = regions["hawaii"]
+          uri = "https://api.github.com/repos/ram-labz/doom-native-builder/releases/tags/doom-road-hawaii-run-41744558244"
+          with urllib.request.urlopen(urllib.request.Request(
+              uri, headers={"User-Agent": "doom-source-audit"}), timeout=30) as response:
+              release = json.load(response)
+          assets = {a["name"]: a for a in release["assets"]}
+          asset = assets["valhalla_tiles_hawaii.tar"]
+          assert not release["draft"] and asset["state"] == "uploaded"
+          assert hawaii["sizeBytes"] == asset["size"]
+          assert asset["digest"] == "sha256:" + hawaii["sha256"]
+          assert asset["browser_download_url"] == hawaii["url"]
+          assert "OpenStreetMap" in hawaii["attribution"]
+          print("PASS: Hawaii routing graph exists as a real published asset with matching size, SHA-256 and OSM attribution.")
+          PY
+
       - name: Check source and downloaded content catalog
         working-directory: doom
         run: python3 tool/zero_build_release_gate.py
