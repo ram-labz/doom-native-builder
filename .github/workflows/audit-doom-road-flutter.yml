@@ -1,0 +1,62 @@
+name: Free DOOM offline road Flutter checks (no native compilation)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/audit-doom-road-flutter.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: doom-road-flutter-check
+  cancel-in-progress: false
+
+jobs:
+  road-flutter-check:
+    name: Analyze DOOM and run offline map unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout DOOM private feature branch
+        uses: actions/checkout@v4
+        with:
+          repository: ram-labz/doom
+          ref: feature/embedded-offline-navigation
+          token: ${{ secrets.DOOM_REPO_READ_TOKEN }}
+          persist-credentials: false
+          path: doom
+
+      - name: Install Flutter SDK with a reusable cache
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Resolve Flutter dependencies without Xcode
+        working-directory: doom
+        run: |
+          flutter --version
+          flutter create --platforms=ios,android --project-name doom --org com.ramlabz .
+          flutter pub get
+
+      - name: Static Dart analysis, no native build
+        working-directory: doom
+        run: flutter analyze --no-fatal-infos --no-fatal-warnings
+
+      - name: Validate offline catalog, redirects and route decoding
+        working-directory: doom
+        run: |
+          flutter test --reporter expanded \
+            test/doom_content_catalog_test.dart \
+            test/offline_routing_archive_test.dart \
+            test/offline_road_routing_test.dart \
+            test/download_center_flow_test.dart
+
+      - name: Zero-cost release catalog validation
+        working-directory: doom
+        run: |
+          python3 tool/zero_build_release_gate.py
+          python3 -m unittest discover -s test -p 'test_*.py'
