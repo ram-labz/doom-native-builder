@@ -73,7 +73,7 @@ def audit(bundle: Path, restore_path: Path) -> dict:
                         bytes.fromhex("feedfacf"), bytes.fromhex("cffaedfe"),
                         bytes.fromhex("cafebabe"), bytes.fromhex("bebafeca"),
                         bytes.fromhex("cafebabf"), bytes.fromhex("bfbafeca"),
-                    )) or magic == b"!<arch>\\n":
+                    )) or magic == b"!<arch>\n":
                         native_candidates[name] = entry.size
     missing = sorted(required - seen)
     if missing:
