@@ -1,0 +1,166 @@
+name: Build and publish DOOM Hawaii offline road graph (free Linux)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/build-doom-hawaii-road-pack.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: doom-hawaii-road-pack
+  cancel-in-progress: false
+
+jobs:
+  build-and-publish:
+    name: Build, route-test, and publish a real Valhalla graph
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Inspect disk space and Docker
+        run: |
+          set -euo pipefail
+          docker --version
+          df -h /
+          free -h
+          test "$(df -Pk / | awk 'NR==2 {print $4}')" -gt 6291456 || {
+            echo "::error::Less than 6 GiB scratch space."
+            exit 1
+          }
+
+      - name: Checkout DOOM's audited road-archive validator
+        uses: actions/checkout@v4
+        with:
+          repository: ram-labz/doom
+          ref: feature/embedded-offline-navigation
+          token: ${{ secrets.DOOM_REPO_READ_TOKEN }}
+          persist-credentials: false
+          path: doom
+
+      - name: Confirm real Hawaii OpenStreetMap source
+        run: |
+          set -euo pipefail
+          curl -fLIsS --retry 3 --max-time 40 \
+            https://download.geofabrik.de/north-america/us/hawaii-latest.osm.pbf \
+            | head -n 25
+          python3 -m unittest discover -s doom/tool -p 'test_prepare_road_region.py' -v
+
+      - name: Build routable Hawaii graph without Codemagic, Xcode or macOS
+        env:
+          IMAGE: ghcr.io/valhalla/valhalla-scripted@sha256:0e559e57b19e293bcf62e10c64163f2fe60c42902a760152c9238307e13e7257
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/hawaii-tiles"
+          docker pull "$IMAGE"
+          docker run -d --name doom-hawaii-valhalla \
+            --cpus 2 --memory 6g \
+            -p 127.0.0.1:8002:8002 \
+            -v "$RUNNER_TEMP/hawaii-tiles:/custom_files" \
+            -e tile_urls=https://download.geofabrik.de/north-america/us/hawaii-latest.osm.pbf \
+            -e use_tiles_ignore_pbf=False \
+            -e build_tar=True \
+            -e build_elevation=False \
+            -e build_transit=False \
+            -e server_threads=2 \
+            -e serve_tiles=True \
+            "$IMAGE"
+          # Fail before publication if the engine exits, hangs, or returns
+          # no genuine driveable route. Do not publish merely a nonempty TAR.
+          READY=0
+          for attempt in $(seq 1 120); do
+            if ! docker inspect --format '{{.State.Running}}' doom-hawaii-valhalla | grep -q true; then
+              docker logs --tail 150 doom-hawaii-valhalla || true
+              echo "::error::Valhalla container exited before its route test."
+              exit 1
+            fi
+            if [ -s "$RUNNER_TEMP/hawaii-tiles/valhalla_tiles.tar" ]; then
+              if curl -sS --fail --max-time 12 \
+                 -H 'Content-Type: application/json' \
+                 -d '{"locations":[{"lat":21.3099,"lon":-157.8581},{"lat":21.2916,"lon":-157.8425}],"costing":"auto","directions_options":{"units":"kilometers"}}' \
+                 http://127.0.0.1:8002/route -o "$RUNNER_TEMP/hawaii-route.json"; then
+                if python3 - "$RUNNER_TEMP/hawaii-route.json" <<'PY'
+          import json, sys
+          with open(sys.argv[1], encoding='utf-8') as f:
+              response = json.load(f)
+          trip = response.get('trip', {})
+          summary = trip.get('summary', {})
+          assert summary.get('length', 0) > 0, 'Valhalla returned no driving distance'
+          assert summary.get('time', 0) > 0, 'Valhalla returned no driving duration'
+          assert trip.get('legs'), 'Valhalla returned no legs'
+          print('Verified Honolulu street route:', summary)
+          PY
+                then
+                  READY=1
+                  break
+                fi
+              fi
+            fi
+            if [ $((attempt % 6)) -eq 0 ]; then
+              echo "Still building/route-testing Hawaii graph: check $attempt / 120"
+              docker logs --tail 12 doom-hawaii-valhalla || true
+            fi
+            sleep 10
+          done
+          if [ "$READY" -ne 1 ]; then
+            docker logs --tail 150 doom-hawaii-valhalla || true
+            echo "::error::No verified Honolulu route after 20 minutes."
+            exit 1
+          fi
+          docker logs --tail 25 doom-hawaii-valhalla || true
+          docker stop -t 15 doom-hawaii-valhalla || true
+          test -s "$RUNNER_TEMP/hawaii-tiles/valhalla_tiles.tar"
+          cp "$RUNNER_TEMP/hawaii-tiles/valhalla_tiles.tar" \
+             "$RUNNER_TEMP/valhalla_tiles_hawaii.tar"
+          ls -lh "$RUNNER_TEMP/valhalla_tiles_hawaii.tar"
+
+      - name: Validate real .gph tiles, exact checksum, source attribution and release size
+        env:
+          REGION_TAG: doom-road-hawaii-run-${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          FILE="$RUNNER_TEMP/valhalla_tiles_hawaii.tar"
+          SIZE=$(stat -c%s "$FILE")
+          test "$SIZE" -ge 1024 && test "$SIZE" -le 1500000000 || {
+            echo "::error::Road graph exceeds in-app publication size limit."
+            exit 1
+          }
+          python3 doom/tool/prepare_road_region.py \
+            --archive "$FILE" \
+            --id hawaii \
+            --name "Hawaii offline road routing" \
+            --url "https://github.com/ram-labz/doom-native-builder/releases/download/$REGION_TAG/valhalla_tiles_hawaii.tar" \
+            --attribution "© OpenStreetMap contributors (ODbL 1.0); Geofabrik Hawaii extract" \
+            --catalog doom/assets/catalog_seed.json \
+            --output "$RUNNER_TEMP/verified-doom-catalog.json"
+          python3 - "$RUNNER_TEMP/verified-doom-catalog.json" <<'PY'
+          import json, os, sys, hashlib
+          with open(sys.argv[1], encoding='utf-8') as f:
+              catalog = json.load(f)
+          regions = catalog['regions']
+          assert len(regions) == 1 and regions[0]['id'] == 'hawaii'
+          actual = os.path.getsize(os.environ['RUNNER_TEMP'] + '/valhalla_tiles_hawaii.tar')
+          assert regions[0]['sizeBytes'] == actual
+          print('Verified catalog region:', json.dumps(regions[0], indent=2))
+          PY
+          df -h /
+
+      - name: Publish only the verified real road graph and metadata
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REGION_TAG: doom-road-hawaii-run-${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          sha256sum "$RUNNER_TEMP/valhalla_tiles_hawaii.tar" \
+            > "$RUNNER_TEMP/valhalla_tiles_hawaii.tar.sha256"
+          gh release create "$REGION_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "DOOM Hawaii offline road graph (verified Valhalla)" \
+            --notes "Real Hawaii OpenStreetMap road graph from Geofabrik, © OpenStreetMap contributors (ODbL 1.0). Built with pinned Valhalla container. Tested with a Honolulu driving route before publishing. For on-device iOS/Android testing; map data and directions are not guaranteed current." \
+            "$RUNNER_TEMP/valhalla_tiles_hawaii.tar" \
+            "$RUNNER_TEMP/valhalla_tiles_hawaii.tar.sha256" \
+            "$RUNNER_TEMP/verified-doom-catalog.json"
+          echo "PUBLISHED_TAG=$REGION_TAG"
+          cat "$RUNNER_TEMP/valhalla_tiles_hawaii.tar.sha256"
