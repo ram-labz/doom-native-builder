@@ -83,6 +83,13 @@ jobs:
           assert "bash tool/build_embedded_navigation.sh" not in s
           assert "DOOM_IOS_NATIVE_BUNDLE_MANIFEST_URL:" in s
           assert "DOOM_IOS_NATIVE_BUNDLE_SHA256:" in s
+          # Codemagic CLI defaults to recursively scanning **/*.xcodeproj,
+          # including broken example projects under build/ios/SourcePackages.
+          # Scope BOTH commands to the generated DOOM Runner project.
+          assert "xcode-project detect-bundle-id --project ios/Runner.xcodeproj --target Runner" in s
+          assert "script: xcode-project use-profiles --project ios/Runner.xcodeproj" in s
+          assert s.count("xcode-project detect-bundle-id") == 1
+          assert s.count("xcode-project use-profiles") == 1
           assert "from download_ios_native_release import read_verified_manifest" in (
               Path("tool/restore_ios_native_bundle.py").read_text()
           )
