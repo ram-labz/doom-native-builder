@@ -50,6 +50,56 @@ jobs:
         working-directory: doom
         run: python3 -m unittest discover -s test -p 'test_*.py' -v
 
+      - name: Validate iOS FFI retention against actual pinned upstream CoMaps source
+        working-directory: doom
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import subprocess
+          import sys
+          import tempfile
+          import urllib.request
+
+          revision = "bf20d1e7460fb08e5702514881d76cfa047caa00"
+          base = (
+              "https://raw.githubusercontent.com/agus-works/"
+              "agus-maps-flutter/" + revision + "/"
+          )
+          files = (
+              "ios/agus_maps_flutter/Package.swift",
+              "ios/agus_maps_flutter/Sources/"
+              "agus_maps_flutter_native/agus_maps_flutter_ios.mm",
+          )
+          with tempfile.TemporaryDirectory(prefix="doom-pinned-ffi-") as work:
+              root = Path(work)
+              for relative in files:
+                  dest = root / relative
+                  dest.parent.mkdir(parents=True, exist_ok=True)
+                  request = urllib.request.Request(base + relative, headers={
+                      "User-Agent": "DOOM-pinned-ios-ffi-preflight"
+                  })
+                  with urllib.request.urlopen(request, timeout=40) as response:
+                      data = response.read(512 * 1024 + 1)
+                  assert data and len(data) < 512 * 1024, relative
+                  dest.write_bytes(data)
+              subprocess.run([
+                  sys.executable, "tool/patch_embedded_ios_linker.py", str(root)
+              ], check=True)
+              for attempt in range(2):
+                  subprocess.run([
+                      sys.executable, "tool/retain_ios_ffi_exports.py", str(root)
+                  ], check=True)
+              manifest = (root / files[0]).read_text()
+              assert manifest.count('" _unused "') == 0
+              assert manifest.count('"_comaps_init_paths"') == 1
+              assert manifest.count('"_comaps_navigation_build_route"') == 1
+              assert manifest.count('"_comaps_force_redraw"') == 1
+              assert manifest.count('"_doom_comaps_location_update"') == 1
+              assert manifest.count("DOOM_FFI_EXPORTS_BEGIN") == 1
+              print("PASS: actual pinned CoMaps SwiftPM manifest retains "
+                    "all native Dart FFI functions, idempotently.")
+          PY
+
       - name: Verify CoMaps prebuilt-only and signed workflow ordering
         working-directory: doom
         run: |
