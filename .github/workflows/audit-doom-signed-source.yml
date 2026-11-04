@@ -67,6 +67,7 @@ jobs:
               "flutter analyze --no-fatal-infos --no-fatal-warnings",
               "flutter test --reporter expanded",
               "\n        script: python3 tool/restore_ios_native_bundle.py\n",
+              "python3 tool/retain_ios_ffi_exports.py .native_build/agus_maps_flutter",
               "python3 tool/verify_ios_native_frameworks.py",
               "dart run tool/release_preflight.dart",
               "xcode-project detect-bundle-id",
@@ -106,6 +107,11 @@ jobs:
           assert "from download_ios_native_release import read_verified_manifest" in (
               Path("tool/restore_ios_native_bundle.py").read_text()
           )
+          assert "DynamicLibrary.process()" in (
+              Path("tool/retain_ios_ffi_exports.py").read_text()
+          )
+          assert "--ffi-source .native_build/agus_maps_flutter/" in s
+          assert "python3 tool/verify_ios_ipa_native_gps.py" in s
           print("PASS: signed IPA uses pinned precompiled native binaries and ordered gates.")
           PY
 
