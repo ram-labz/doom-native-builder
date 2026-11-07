@@ -34,7 +34,9 @@ class GitHubArtifactRedirect(urllib.request.HTTPRedirectHandler):
 
 
 RUN_ID = "41710765023"
-ARTIFACT_ID = "13274835129"
+ARTIFACT_ID = os.environ.get("ARTIFACT_ID") or "13274835129"
+if not ARTIFACT_ID.isdigit():
+    raise SystemExit("ARTIFACT_ID must be numeric")
 API = f"https://api.github.com/repos/ram-labz/doom-native-builder/actions/artifacts/{ARTIFACT_ID}/zip"
 ROOT = ".native_build/agus_maps_flutter/"
 SKIP_PARTS = {

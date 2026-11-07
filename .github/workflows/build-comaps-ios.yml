@@ -2,6 +2,11 @@ name: Build DOOM CoMaps iOS binaries
 
 on:
   workflow_dispatch:
+    inputs:
+      doom_ref:
+        description: ram-labz/doom branch or SHA with the native patch scripts
+        default: feature/embedded-offline-navigation
+        required: true
 
 permissions:
   contents: read
@@ -29,7 +34,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: ram-labz/doom
-          ref: feature/embedded-offline-navigation
+          ref: ${{ inputs.doom_ref || 'feature/embedded-offline-navigation' }}
           token: ${{ secrets.DOOM_REPO_READ_TOKEN }}
           persist-credentials: false
           path: doom
