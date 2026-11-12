@@ -60,9 +60,16 @@ jobs:
                   raise SystemExit(f'Native street-name patch missing: {token}')
           if 'patch_embedded_turns.dart' not in prepare:
               raise SystemExit('Native build does not apply turns patch.')
+          camera = Path('tool/patch_embedded_route_camera.py').read_text()
+          if ('DOOM_ROUTE_PREVIEW_CAMERA_OWNED_BY_FLUTTER' not in camera or
+                  'SetModelViewRect' not in camera):
+              raise SystemExit('Native route-camera suppression patch missing.')
+          if ('DOOM_MODE_SWITCH_CAMERA_BUILD_GATE' not in prepare or
+                  'patch_embedded_route_camera.py' not in prepare):
+              raise SystemExit('Native builder must apply camera patch before compile.')
           if 'upcomingInstruction' not in guidance:
               raise SystemExit('Turn guidance formatter missing.')
-          print('Native street-name and map-turn source gates passed.')
+          print('Native road-name and no-zoom mode-switch gates passed.')
           PY
 
       - name: Set up Flutter
