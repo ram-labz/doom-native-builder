@@ -5,7 +5,7 @@ on:
     inputs:
       doom_ref:
         description: ram-labz/doom branch or SHA with the native patch scripts
-        default: feature/embedded-offline-navigation
+        default: chat2
         required: true
 
 permissions:
@@ -34,10 +34,36 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: ram-labz/doom
-          ref: ${{ inputs.doom_ref || 'feature/embedded-offline-navigation' }}
+          ref: ${{ inputs.doom_ref || 'chat2' }}
           token: ${{ secrets.DOOM_REPO_READ_TOKEN }}
           persist-credentials: false
           path: doom
+
+      # Fail before Flutter installation or the costly CoMaps bootstrap if
+      # a stale DOOM branch lacks the actual outgoing-street resolver.
+      - name: Verify native street-name source and preflight contracts
+        working-directory: doom
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          patch = Path('tool/patch_embedded_turns.dart').read_text()
+          prepare = Path('tool/prepare_embedded_navigation.sh').read_text()
+          guidance = Path('lib/core/doom_turn_guidance.dart').read_text()
+          required = (
+              'GetClosestStreetNameAfterIdx(turn.m_index, nextInfo)',
+              'nextInfo.m_ref',
+              'nextInfo.m_destination_ref',
+              'doom_comaps_route_turns',
+          )
+          for token in required:
+              if token not in patch:
+                  raise SystemExit(f'Native street-name patch missing: {token}')
+          if 'patch_embedded_turns.dart' not in prepare:
+              raise SystemExit('Native build does not apply turns patch.')
+          if 'upcomingInstruction' not in guidance:
+              raise SystemExit('Turn guidance formatter missing.')
+          print('Native street-name and map-turn source gates passed.')
+          PY
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
