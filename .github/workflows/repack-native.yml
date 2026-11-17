@@ -5,7 +5,6 @@ on:
     inputs:
       artifact_id:
         description: doom-ios-native-bundle artifact id from a successful build run
-        default: '13274835129'
         required: true
 
 permissions:
@@ -26,14 +25,16 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh api repos/ram-labz/doom-native-builder/actions/artifacts/${{ inputs.artifact_id || '13274835129' }} \
-            --jq '{name,expired,size_in_bytes,expires_at}'
+          gh api repos/ram-labz/doom-native-builder/actions/artifacts/${{ inputs.artifact_id }} \
+            --jq 'if .name == "doom-ios-native-bundle" and .expired == false and .size_in_bytes > 0
+                  then {name,expired,size_in_bytes,expires_at,workflow_run}
+                  else error("Wrong, empty, or expired native build artifact") end'
           df -h /
       - name: Repack existing native archive without rebuilding
         env:
           GH_TOKEN: ${{ github.token }}
           OUTPUT: ${{ runner.temp }}/doom-ios-native-slim.tar.gz
-          ARTIFACT_ID: ${{ inputs.artifact_id || '13274835129' }}
+          ARTIFACT_ID: ${{ inputs.artifact_id }}
         run: python3 scripts/repack_existing_artifact.py
       - name: Upload compact verified archive
         uses: actions/upload-artifact@v4
