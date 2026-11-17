@@ -1,11 +1,11 @@
 name: Publish reusable slim CoMaps iOS release (no compilation)
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - .github/workflows/publish-ios-native.yml
   workflow_dispatch:
+    inputs:
+      repack_run_id:
+        description: Successful slim repack workflow run ID, never latest automatically
+        required: true
 
 permissions:
   contents: write
@@ -27,22 +27,25 @@ jobs:
           python3 -m unittest discover -s tests -p 'test_publish_slim_release.py' -v
           python3 -m py_compile scripts/publish_slim_release.py
 
-      - name: Locate latest successful slim repack
+      - name: Validate explicitly selected successful slim repack
         id: repack
         env:
           GH_TOKEN: ${{ github.token }}
+          REQUESTED_REPACK_RUN: ${{ inputs.repack_run_id }}
         run: |
           set -euo pipefail
-          RUN_ID=$(gh run list --repo "${GITHUB_REPOSITORY}" \
-            --workflow repack-native.yml --limit 30 \
-            --json databaseId,status,conclusion \
-            --jq '[.[] | select(.status == "completed" and .conclusion == "success")][0].databaseId // empty')
-          if [[ ! "$RUN_ID" =~ ^[0-9]+$ ]]; then
-            echo '::error::No successful repack run. No new native build will start.'
+          RUN_ID="$REQUESTED_REPACK_RUN"
+          if [[ ! "$RUN_ID" =~ ^[0-9]{5,15}$ ]]; then
+            echo '::error::A specific real slim repack run ID is required.'
             exit 1
           fi
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/$RUN_ID" \
+            --jq 'if .name == "Slim successful CoMaps artifact (no compilation)"
+                 and .status == "completed" and .conclusion == "success"
+                 then {id,status,conclusion,name,head_sha}
+                 else error("Selected run is not a successful native repack") end'
           echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
-          echo "Reusing successful repack run: $RUN_ID"
+          echo "Publishing the exact chosen repack: $RUN_ID"
 
       - name: Download already compiled slim artifact
         env:
