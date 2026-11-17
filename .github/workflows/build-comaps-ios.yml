@@ -80,6 +80,13 @@ jobs:
           print('Native GPS, arrow, route camera and street-name gates passed.')
           PY
           python3 -m unittest discover -s test -p 'test_embedded_navigation_marker_patch.py' -v
+          python3 -m unittest discover -s test -p 'test_doom_map_features_patch.py' -v
+          python3 -m unittest discover -s test -p 'test_embedded_ios_frame_pacing_patch.py' -v
+          python3 -m unittest discover -s test -p 'test_map_mode_camera_and_ci_cache.py' -v
+          python3 -m py_compile tool/patch_embedded_navigation_marker.py \
+            tool/patch_embedded_route_camera.py \
+            tool/patch_embedded_doom_map_features.py \
+            tool/patch_embedded_ios_frame_pacing.py
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
@@ -104,6 +111,37 @@ jobs:
         env:
           DOOM_IOS_DEVICE_ONLY: '1'
         run: bash tool/prepare_embedded_navigation.sh ios
+
+      - name: Confirm compiled bundle source contains all visual fixes
+        working-directory: doom
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import sys
+          sys.path.insert(0, str(Path('tool').resolve()))
+          from patch_embedded_navigation_marker import (
+              MARKER, ROUTE_MARKER, RELATIVE_SOURCE, ROUTE_RELATIVE_SOURCE,
+              patch_source, patch_route_renderer,
+          )
+          comaps = Path('.native_build/agus_maps_flutter/thirdparty/comaps')
+          position = (comaps / RELATIVE_SOURCE).read_text(encoding='utf-8')
+          route = (comaps / ROUTE_RELATIVE_SOURCE).read_text(encoding='utf-8')
+          if MARKER not in position or ROUTE_MARKER not in route:
+              raise SystemExit('Missing CoMaps GPS or route visual patch in compiled source')
+          if patch_source(position) != position or patch_route_renderer(route) != route:
+              raise SystemExit('CoMaps compiled source has incomplete visual patch')
+          bridge = Path('.native_build/agus_maps_flutter/ios/agus_maps_flutter/Sources/'
+                        'agus_maps_flutter_native/agus_maps_flutter_ios.mm').read_text()
+          for feature in (
+              'doom_comaps_search_viewport', 'doom_comaps_reverse_geocode',
+              'doom_comaps_set_marks_selected', 'm_removedIds.insert(id)',
+              '!mf::g_marksInitialized', 'doom_comaps_route_turns',
+          ):
+              if feature not in bridge:
+                  raise SystemExit(f'Missing native engine feature: {feature}')
+          print('PASS: native source has removed blue markers and ghost-pin cleanup')
+          PY
 
       - name: Inspect compiled framework paths
         if: always()
