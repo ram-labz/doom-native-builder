@@ -1,6 +1,10 @@
 name: Publish reusable slim CoMaps iOS release (no compilation)
 
 on:
+  workflow_run:
+    workflows:
+      - Slim successful CoMaps artifact (no compilation)
+    types: [completed]
   workflow_dispatch:
     inputs:
       repack_run_id:
@@ -17,6 +21,7 @@ concurrency:
 
 jobs:
   publish:
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_sha == 'c6d70125e73d6b93ab70435bc3b79664400b2d37' && github.event.workflow_run.event == 'push')
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
@@ -31,7 +36,7 @@ jobs:
         id: repack
         env:
           GH_TOKEN: ${{ github.token }}
-          REQUESTED_REPACK_RUN: ${{ inputs.repack_run_id }}
+          REQUESTED_REPACK_RUN: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.id || inputs.repack_run_id }}
         run: |
           set -euo pipefail
           RUN_ID="$REQUESTED_REPACK_RUN"
@@ -42,6 +47,8 @@ jobs:
           gh api "repos/${GITHUB_REPOSITORY}/actions/runs/$RUN_ID" \
             --jq 'if .name == "Slim successful CoMaps artifact (no compilation)"
                  and .status == "completed" and .conclusion == "success"
+                 and (.event == "workflow_dispatch" or
+                      (.event == "push" and .head_sha == "c6d70125e73d6b93ab70435bc3b79664400b2d37"))
                  then {id,status,conclusion,name,head_sha}
                  else error("Selected run is not a successful native repack") end'
           echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
