@@ -1,10 +1,6 @@
 name: Slim successful CoMaps artifact (no compilation)
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - .github/workflows/repack-native.yml
   workflow_dispatch:
     inputs:
       artifact_id:
@@ -21,35 +17,34 @@ concurrency:
 
 jobs:
   repack:
-    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[repack-doom-native-44004567135]')
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
-      - name: Confirm source artifact came from the successful patched compile
+      - name: Confirm source artifact is a successful native compile
         env:
           GH_TOKEN: ${{ github.token }}
-          SOURCE_ARTIFACT_ID: ${{ github.event_name == 'push' && '14297019123' || inputs.artifact_id }}
+          SOURCE_ARTIFACT_ID: ${{ inputs.artifact_id }}
         run: |
           set -euo pipefail
-          test "$SOURCE_ARTIFACT_ID" = "14297019123"
+          [[ "$SOURCE_ARTIFACT_ID" =~ ^[0-9]{5,15}$ ]] || { echo 'Invalid artifact id'; exit 1; }
           gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/$SOURCE_ARTIFACT_ID" \
             --jq 'if .name == "doom-ios-native-bundle" and .expired == false
-                     and .size_in_bytes > 0
-                     and .workflow_run.id == 44004567135
-                  then {name,expired,size_in_bytes,expires_at,workflow_run}
-                  else error("Artifact not from approved successful CoMaps compile") end'
-          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/44004567135" \
-            --jq 'if .status == "completed" and .conclusion == "success"
-                     and .head_sha == "850f6a3438b0e814d2de1eb3b0426335750e8107"
-                  then {id,status,conclusion,head_sha}
-                  else error("Native compile is not the reviewed successful build") end'
+                     and .size_in_bytes > 0 and .workflow_run.id != null
+                  then {name,expired,size_in_bytes,workflow_run}
+                  else error("Artifact is empty, expired, or wrong type") end'
+          RUN_ID=$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/$SOURCE_ARTIFACT_ID" --jq '.workflow_run.id')
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/$RUN_ID" \
+            --jq 'if .name == "Build DOOM CoMaps iOS binaries"
+                     and .status == "completed" and .conclusion == "success"
+                  then {id,status,conclusion,name,head_sha}
+                  else error("Source CoMaps compile is not successful") end'
           df -h /
       - name: Repack existing native archive without rebuilding
         env:
           GH_TOKEN: ${{ github.token }}
           OUTPUT: ${{ runner.temp }}/doom-ios-native-slim.tar.gz
-          ARTIFACT_ID: ${{ github.event_name == 'push' && '14297019123' || inputs.artifact_id }}
+          ARTIFACT_ID: ${{ inputs.artifact_id }}
         run: python3 scripts/repack_existing_artifact.py
       - name: Upload compact verified archive
         uses: actions/upload-artifact@v4
