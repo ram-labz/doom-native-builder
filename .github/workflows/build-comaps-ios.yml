@@ -5,7 +5,7 @@ on:
     inputs:
       doom_ref:
         description: ram-labz/doom branch or SHA with the native patch scripts
-        default: chat2
+        default: chat4
         required: true
 
 permissions:
@@ -34,7 +34,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: ram-labz/doom
-          ref: ${{ inputs.doom_ref || 'chat2' }}
+          ref: ${{ inputs.doom_ref || 'chat4' }}
           token: ${{ secrets.DOOM_REPO_READ_TOKEN }}
           persist-credentials: false
           path: doom
@@ -69,8 +69,17 @@ jobs:
               raise SystemExit('Native builder must apply camera patch before compile.')
           if 'upcomingInstruction' not in guidance:
               raise SystemExit('Turn guidance formatter missing.')
-          print('Native road-name and no-zoom mode-switch gates passed.')
+          marker = Path('tool/patch_embedded_navigation_marker.py').read_text()
+          if ('DOOM_HIDE_DUPLICATE_NATIVE_LOCATION_MARKER' not in marker or
+                  'DOOM_HIDE_EXTRA_ROUTE_MANEUVER_ARROWS' not in marker or
+                  'ROUTE_RELATIVE_SOURCE' not in marker or
+                  'patch_route_renderer' not in marker):
+              raise SystemExit('Native GPS dot or duplicate turn-arrow patch missing.')
+          if 'patch_checkout(pathlib.Path(argv[1]))' not in camera:
+              raise SystemExit('Native builder does not apply the visual marker patch.')
+          print('Native GPS, arrow, route camera and street-name gates passed.')
           PY
+          python3 -m unittest discover -s test -p 'test_embedded_navigation_marker_patch.py' -v
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
