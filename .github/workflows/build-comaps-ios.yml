@@ -41,7 +41,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: ram-labz/doom
-          ref: ${{ github.event_name == 'push' && 'c77304758a4ebad84663788d91e6f8c99f7538a3' || inputs.doom_ref || 'chat4' }}
+          ref: ${{ github.event_name == 'push' && '6d49646440f2c20c8e2ccceffac6dcc55cf3aecd' || inputs.doom_ref || 'chat4' }}
           token: ${{ secrets.DOOM_REPO_READ_TOKEN }}
           persist-credentials: false
           path: doom
